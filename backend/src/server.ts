@@ -1,6 +1,9 @@
 import express from 'express';
 import cors from 'cors';
 import { checkDb, closeDb } from './db';
+import authRoutes from './routes/auth.routes';
+import adminRoutes from './routes/admin.routes';
+import { errorHandler, notFoundHandler } from './lib/errors';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -36,11 +39,18 @@ app.get('/health', async (_req, res) => {
   }
 });
 
+// Domain routes
+app.use('/auth', authRoutes);
+app.use('/admin', adminRoutes);
+
+// Order matters: 404 then error handler
+app.use(notFoundHandler);
+app.use(errorHandler);
+
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[backend] listening on http://0.0.0.0:${PORT}`);
 });
 
-// Graceful shutdown
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {
   process.on(sig, async () => {
     console.log(`[backend] received ${sig}, shutting down`);

@@ -24,6 +24,29 @@ enum UserStatus {
   DEACTIVATED
 }
 
+enum MaterialUnit {
+  KG
+  G
+  LITRES
+  ML
+  PIECES
+}
+
+enum StockItemType {
+  RAW_MATERIAL
+  FINISHED_BATTERY
+}
+
+enum StockMovementType {
+  OPENING_STOCK
+  RECEIPT
+  PRODUCTION_CONSUMPTION
+  PRODUCTION_OUTPUT
+  DISPATCH
+  ADJUSTMENT
+  REVERSAL
+}
+
 // ──────────────────────────────────────────────────────────
 // Company (tenant root)
 // ──────────────────────────────────────────────────────────
@@ -35,7 +58,10 @@ model Company {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  users User[]
+  users          User[]
+  rawMaterials   RawMaterial[]
+  batteryTypes   BatteryType[]
+  stockMovements StockMovement[]
 
   @@map("companies")
 }
@@ -54,8 +80,10 @@ model User {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  company  Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  sessions Session[]
+  company          Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sessions         Session[]
+  recipeVersions   RecipeVersion[]
+  stockMovements   StockMovement[]
 
   @@unique([companyId, email], name: "company_email_unique")
   @@index([companyId])
@@ -80,4 +108,120 @@ model Session {
   @@index([userId])
   @@index([revokedAt])
   @@map("sessions")
+}
+
+// ──────────────────────────────────────────────────────────
+// Raw Material (fractional quantities, unit-per-material)
+// ──────────────────────────────────────────────────────────
+
+model RawMaterial {
+  id                Int          @id @default(autoincrement())
+  companyId         Int
+  name              String
+  unit              MaterialUnit
+  lowStockThreshold Decimal      @default(0) @db.Decimal(18, 4)
+  currentStock      Decimal      @default(0) @db.Decimal(18, 4)
+  active            Boolean      @default(true)
+  createdAt         DateTime     @default(now())
+  updatedAt         DateTime     @updatedAt
+
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  recipeItems    RecipeItem[]
+  stockMovements StockMovement[] @relation("RawMaterialMovements")
+
+  @@unique([companyId, name], name: "company_material_name_unique")
+  @@index([companyId])
+  @@index([companyId, active])
+  @@map("raw_materials")
+}
+
+// ──────────────────────────────────────────────────────────
+// Battery Type (whole-number stock, versioned recipes)
+// ──────────────────────────────────────────────────────────
+
+model BatteryType {
+  id                Int      @id @default(autoincrement())
+  companyId         Int
+  name              String
+  lowStockThreshold Int      @default(0)
+  currentStock      Int      @default(0)
+  active            Boolean  @default(true)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  company        Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  recipeVersions RecipeVersion[]
+  stockMovements StockMovement[] @relation("BatteryTypeMovements")
+
+  @@unique([companyId, name], name: "company_battery_type_name_unique")
+  @@index([companyId])
+  @@index([companyId, active])
+  @@map("battery_types")
+}
+
+// ──────────────────────────────────────────────────────────
+// Recipe Version (immutable once created; new version per edit)
+// ──────────────────────────────────────────────────────────
+
+model RecipeVersion {
+  id            Int      @id @default(autoincrement())
+  batteryTypeId Int
+  version       Int
+  isActive      Boolean  @default(true)
+  createdById   Int
+  createdAt     DateTime @default(now())
+
+  batteryType BatteryType  @relation(fields: [batteryTypeId], references: [id], onDelete: Restrict)
+  createdBy   User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  items       RecipeItem[]
+
+  @@unique([batteryTypeId, version], name: "batterytype_version_unique")
+  @@index([batteryTypeId, isActive])
+  @@map("recipe_versions")
+}
+
+model RecipeItem {
+  id              Int     @id @default(autoincrement())
+  recipeVersionId Int
+  rawMaterialId   Int
+  quantityPerUnit Decimal @db.Decimal(18, 4) // amount consumed per 1 finished battery
+
+  recipeVersion RecipeVersion @relation(fields: [recipeVersionId], references: [id], onDelete: Cascade)
+  rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+
+  @@unique([recipeVersionId, rawMaterialId], name: "recipe_item_unique")
+  @@index([recipeVersionId])
+  @@index([rawMaterialId])
+  @@map("recipe_items")
+}
+
+// ──────────────────────────────────────────────────────────
+// Stock Movement (append-only ledger)
+// ──────────────────────────────────────────────────────────
+
+model StockMovement {
+  id               Int               @id @default(autoincrement())
+  companyId        Int
+  itemType         StockItemType
+  movementType     StockMovementType
+  rawMaterialId    Int?
+  batteryTypeId    Int?
+  quantityChange   Decimal           @db.Decimal(18, 4)
+  resultingBalance Decimal           @db.Decimal(18, 4)
+  reason           String?
+  referenceType    String? // e.g. "PRODUCTION_REQUEST", "RECEIPT", "DISPATCH", "ADJUSTMENT", "REVERSAL"
+  referenceId      Int?
+  userId           Int
+  createdAt        DateTime          @default(now())
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  user        User         @relation(fields: [userId], references: [id], onDelete: Restrict)
+  rawMaterial RawMaterial? @relation("RawMaterialMovements", fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  batteryType BatteryType? @relation("BatteryTypeMovements", fields: [batteryTypeId], references: [id], onDelete: Restrict)
+
+  @@index([companyId, createdAt])
+  @@index([companyId, itemType, rawMaterialId])
+  @@index([companyId, itemType, batteryTypeId])
+  @@index([companyId, referenceType, referenceId])
+  @@map("stock_movements")
 }
