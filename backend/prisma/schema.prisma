@@ -10,10 +10,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ──────────────────────────────────────────────────────────
-// Enums
-// ──────────────────────────────────────────────────────────
-
 enum UserRole {
   ADMIN
   USER
@@ -47,9 +43,23 @@ enum StockMovementType {
   REVERSAL
 }
 
-// ──────────────────────────────────────────────────────────
-// Company (tenant root)
-// ──────────────────────────────────────────────────────────
+enum ProductionRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  DELETED
+  REVERSED
+}
+
+enum ProductionRequestEventType {
+  SUBMITTED
+  EDITED
+  DELETED
+  APPROVED
+  REJECTED
+  RESUBMITTED
+  REVERSED
+}
 
 model Company {
   id             Int      @id @default(autoincrement())
@@ -58,17 +68,16 @@ model Company {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  users          User[]
-  rawMaterials   RawMaterial[]
-  batteryTypes   BatteryType[]
-  stockMovements StockMovement[]
+  users              User[]
+  rawMaterials       RawMaterial[]
+  batteryTypes       BatteryType[]
+  stockMovements     StockMovement[]
+  productionRequests ProductionRequest[]
+  materialReceipts   MaterialReceipt[]
+  dispatches         Dispatch[]
 
   @@map("companies")
 }
-
-// ──────────────────────────────────────────────────────────
-// User
-// ──────────────────────────────────────────────────────────
 
 model User {
   id        Int        @id @default(autoincrement())
@@ -80,19 +89,23 @@ model User {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
 
-  company          Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  sessions         Session[]
-  recipeVersions   RecipeVersion[]
-  stockMovements   StockMovement[]
+  company        Company          @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sessions       Session[]
+  recipeVersions RecipeVersion[]
+  stockMovements StockMovement[]
+
+  requestedProductionRequests ProductionRequest[]      @relation("RequestedProductionRequests")
+  approvedProductionRequests  ProductionRequest[]      @relation("ApprovedProductionRequests")
+  rejectedProductionRequests  ProductionRequest[]      @relation("RejectedProductionRequests")
+  reversedProductionRequests  ProductionRequest[]      @relation("ReversedProductionRequests")
+  productionRequestEvents     ProductionRequestEvent[]
+  receivedReceipts            MaterialReceipt[]
+  madeDispatches              Dispatch[]
 
   @@unique([companyId, email], name: "company_email_unique")
   @@index([companyId])
   @@map("users")
 }
-
-// ──────────────────────────────────────────────────────────
-// Persistent Session (hashed token)
-// ──────────────────────────────────────────────────────────
 
 model Session {
   id         Int       @id @default(autoincrement())
@@ -110,10 +123,6 @@ model Session {
   @@map("sessions")
 }
 
-// ──────────────────────────────────────────────────────────
-// Raw Material (fractional quantities, unit-per-material)
-// ──────────────────────────────────────────────────────────
-
 model RawMaterial {
   id                Int          @id @default(autoincrement())
   companyId         Int
@@ -125,19 +134,16 @@ model RawMaterial {
   createdAt         DateTime     @default(now())
   updatedAt         DateTime     @updatedAt
 
-  company        Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  recipeItems    RecipeItem[]
-  stockMovements StockMovement[] @relation("RawMaterialMovements")
+  company         Company           @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  recipeItems     RecipeItem[]
+  stockMovements  StockMovement[]   @relation("RawMaterialMovements")
+  receipts        MaterialReceipt[]
 
   @@unique([companyId, name], name: "company_material_name_unique")
   @@index([companyId])
   @@index([companyId, active])
   @@map("raw_materials")
 }
-
-// ──────────────────────────────────────────────────────────
-// Battery Type (whole-number stock, versioned recipes)
-// ──────────────────────────────────────────────────────────
 
 model BatteryType {
   id                Int      @id @default(autoincrement())
@@ -149,19 +155,17 @@ model BatteryType {
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt
 
-  company        Company         @relation(fields: [companyId], references: [id], onDelete: Restrict)
-  recipeVersions RecipeVersion[]
-  stockMovements StockMovement[] @relation("BatteryTypeMovements")
+  company            Company             @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  recipeVersions     RecipeVersion[]
+  stockMovements     StockMovement[]     @relation("BatteryTypeMovements")
+  productionRequests ProductionRequest[]
+  dispatches         Dispatch[]
 
   @@unique([companyId, name], name: "company_battery_type_name_unique")
   @@index([companyId])
   @@index([companyId, active])
   @@map("battery_types")
 }
-
-// ──────────────────────────────────────────────────────────
-// Recipe Version (immutable once created; new version per edit)
-// ──────────────────────────────────────────────────────────
 
 model RecipeVersion {
   id            Int      @id @default(autoincrement())
@@ -171,9 +175,10 @@ model RecipeVersion {
   createdById   Int
   createdAt     DateTime @default(now())
 
-  batteryType BatteryType  @relation(fields: [batteryTypeId], references: [id], onDelete: Restrict)
-  createdBy   User         @relation(fields: [createdById], references: [id], onDelete: Restrict)
-  items       RecipeItem[]
+  batteryType        BatteryType         @relation(fields: [batteryTypeId], references: [id], onDelete: Restrict)
+  createdBy          User                @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  items              RecipeItem[]
+  productionRequests ProductionRequest[]
 
   @@unique([batteryTypeId, version], name: "batterytype_version_unique")
   @@index([batteryTypeId, isActive])
@@ -184,7 +189,7 @@ model RecipeItem {
   id              Int     @id @default(autoincrement())
   recipeVersionId Int
   rawMaterialId   Int
-  quantityPerUnit Decimal @db.Decimal(18, 4) // amount consumed per 1 finished battery
+  quantityPerUnit Decimal @db.Decimal(18, 4)
 
   recipeVersion RecipeVersion @relation(fields: [recipeVersionId], references: [id], onDelete: Cascade)
   rawMaterial   RawMaterial   @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
@@ -194,10 +199,6 @@ model RecipeItem {
   @@index([rawMaterialId])
   @@map("recipe_items")
 }
-
-// ──────────────────────────────────────────────────────────
-// Stock Movement (append-only ledger)
-// ──────────────────────────────────────────────────────────
 
 model StockMovement {
   id               Int               @id @default(autoincrement())
@@ -209,7 +210,7 @@ model StockMovement {
   quantityChange   Decimal           @db.Decimal(18, 4)
   resultingBalance Decimal           @db.Decimal(18, 4)
   reason           String?
-  referenceType    String? // e.g. "PRODUCTION_REQUEST", "RECEIPT", "DISPATCH", "ADJUSTMENT", "REVERSAL"
+  referenceType    String?
   referenceId      Int?
   userId           Int
   createdAt        DateTime          @default(now())
@@ -224,4 +225,98 @@ model StockMovement {
   @@index([companyId, itemType, batteryTypeId])
   @@index([companyId, referenceType, referenceId])
   @@map("stock_movements")
+}
+
+model ProductionRequest {
+  id              Int                     @id @default(autoincrement())
+  companyId       Int
+  batteryTypeId   Int
+  recipeVersionId Int
+  requestedById   Int
+  quantity        Int
+  status          ProductionRequestStatus @default(PENDING)
+  recipeSnapshot  Json
+
+  submittedAt DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  approvedAt      DateTime?
+  approvedById    Int?
+  rejectedAt      DateTime?
+  rejectedById    Int?
+  rejectionReason String?
+  reversedAt      DateTime?
+  reversedById    Int?
+  reversalReason  String?
+
+  company       Company      @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  batteryType   BatteryType  @relation(fields: [batteryTypeId], references: [id], onDelete: Restrict)
+  recipeVersion RecipeVersion @relation(fields: [recipeVersionId], references: [id], onDelete: Restrict)
+  requestedBy   User         @relation("RequestedProductionRequests", fields: [requestedById], references: [id], onDelete: Restrict)
+  approvedBy    User?        @relation("ApprovedProductionRequests", fields: [approvedById], references: [id], onDelete: Restrict)
+  rejectedBy    User?        @relation("RejectedProductionRequests", fields: [rejectedById], references: [id], onDelete: Restrict)
+  reversedBy    User?        @relation("ReversedProductionRequests", fields: [reversedById], references: [id], onDelete: Restrict)
+  events        ProductionRequestEvent[]
+
+  @@index([companyId])
+  @@index([companyId, status])
+  @@index([companyId, status, submittedAt])
+  @@index([companyId, batteryTypeId])
+  @@index([requestedById])
+  @@map("production_requests")
+}
+
+model ProductionRequestEvent {
+  id                  Int                        @id @default(autoincrement())
+  productionRequestId Int
+  eventType           ProductionRequestEventType
+  actorId             Int
+  reason              String?
+  metadata            Json?
+  createdAt           DateTime                   @default(now())
+
+  productionRequest ProductionRequest @relation(fields: [productionRequestId], references: [id], onDelete: Cascade)
+  actor             User              @relation(fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([productionRequestId, createdAt])
+  @@index([actorId])
+  @@map("production_request_events")
+}
+
+model MaterialReceipt {
+  id            Int      @id @default(autoincrement())
+  companyId     Int
+  rawMaterialId Int
+  quantity      Decimal  @db.Decimal(18, 4)
+  notes         String?
+  receivedById  Int
+  receivedAt    DateTime @default(now())
+
+  company     Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  rawMaterial RawMaterial @relation(fields: [rawMaterialId], references: [id], onDelete: Restrict)
+  receivedBy  User        @relation(fields: [receivedById], references: [id], onDelete: Restrict)
+
+  @@index([companyId, receivedAt])
+  @@index([companyId, rawMaterialId, receivedAt])
+  @@map("material_receipts")
+}
+
+model Dispatch {
+  id             Int      @id @default(autoincrement())
+  companyId      Int
+  batteryTypeId  Int
+  quantity       Int
+  traderName     String
+  notes          String?
+  dispatchedById Int
+  dispatchedAt   DateTime @default(now())
+
+  company      Company     @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  batteryType  BatteryType @relation(fields: [batteryTypeId], references: [id], onDelete: Restrict)
+  dispatchedBy User        @relation(fields: [dispatchedById], references: [id], onDelete: Restrict)
+
+  @@index([companyId, dispatchedAt])
+  @@index([companyId, batteryTypeId, dispatchedAt])
+  @@index([companyId, traderName])
+  @@map("dispatches")
 }

@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Prisma, RawMaterial } from '@prisma/client';
+import { Prisma, RawMaterial, MaterialReceipt } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { asyncHandler } from '../lib/asyncHandler';
 import { HttpError } from '../lib/errors';
@@ -42,7 +42,12 @@ const adjustSchema = z.object({
   reason: z.string().trim().min(1, 'Reason is required').max(500),
 });
 
-// ── DTO ───────────────────────────────────────────────
+const receiptSchema = z.object({
+  quantity: positiveDecimal,
+  notes: z.string().trim().max(500).optional(),
+});
+
+// ── DTOs ──────────────────────────────────────────────
 function toDto(m: RawMaterial) {
   return {
     id: m.id,
@@ -56,6 +61,18 @@ function toDto(m: RawMaterial) {
   };
 }
 
+function receiptToDto(r: MaterialReceipt) {
+  return {
+    id: r.id,
+    rawMaterialId: r.rawMaterialId,
+    quantity: r.quantity.toString(),
+    notes: r.notes,
+    receivedById: r.receivedById,
+    receivedAt: r.receivedAt.toISOString(),
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────
 function parseId(raw: string): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) throw new HttpError(400, 'Invalid id');
@@ -145,7 +162,6 @@ router.post(
     const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
 
     const result = await prisma.$transaction(async (tx) => {
-      // Verify ownership inside the tx (also locks the row for the movement below)
       const exists = await tx.rawMaterial.findFirst({
         where: { id, companyId: ctx.companyId },
         select: { id: true },
@@ -239,6 +255,82 @@ router.get(
       movements: movements.map(movementToDto),
       total,
       sumQuantityChange: (sumResult._sum.quantityChange ?? new Prisma.Decimal(0)).toString(),
+    });
+  }),
+);
+
+// ── POST /admin/materials/:id/receipts ───────────────
+router.post(
+  '/:id/receipts',
+  asyncHandler(async (req, res) => {
+    const id = parseId(req.params.id);
+    const body = receiptSchema.parse(req.body);
+    const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
+
+    const result = await prisma.$transaction(async (tx) => {
+      const exists = await tx.rawMaterial.findFirst({
+        where: { id, companyId: ctx.companyId },
+        select: { id: true, active: true },
+      });
+      if (!exists) throw new HttpError(404, 'Material not found');
+
+      const receipt = await tx.materialReceipt.create({
+        data: {
+          companyId: ctx.companyId,
+          rawMaterialId: id,
+          quantity: new Prisma.Decimal(body.quantity),
+          notes: body.notes,
+          receivedById: ctx.userId,
+        },
+      });
+
+      const movement = await recordStockMovement(tx, ctx, {
+        itemType: 'RAW_MATERIAL',
+        movementType: 'RECEIPT',
+        rawMaterialId: id,
+        quantityChange: new Prisma.Decimal(body.quantity),
+        reason: body.notes ?? 'Material receipt',
+        referenceType: 'RECEIPT',
+        referenceId: receipt.id,
+      });
+
+      return { receipt, movement };
+    });
+
+    const material = await prisma.rawMaterial.findUnique({ where: { id } });
+    res.status(201).json({
+      receipt: receiptToDto(result.receipt),
+      movement: movementToDto(result.movement),
+      material: toDto(material!),
+    });
+  }),
+);
+
+// ── GET /admin/materials/:id/receipts ────────────────
+router.get(
+  '/:id/receipts',
+  asyncHandler(async (req, res) => {
+    const id = parseId(req.params.id);
+    await loadOwnedMaterial(id, req.user!.companyId);
+
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const where = { companyId: req.user!.companyId, rawMaterialId: id };
+
+    const [receipts, total] = await Promise.all([
+      prisma.materialReceipt.findMany({
+        where,
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        skip: offset,
+      }),
+      prisma.materialReceipt.count({ where }),
+    ]);
+
+    res.json({
+      receipts: receipts.map(receiptToDto),
+      total,
     });
   }),
 );

@@ -3,7 +3,12 @@ import { ZodError } from 'zod';
 import { Prisma } from '@prisma/client';
 
 export class HttpError extends Error {
-  constructor(public status: number, message: string, public code?: string) {
+  constructor(
+    public status: number,
+    message: string,
+    public code?: string,
+    public details?: unknown,
+  ) {
     super(message);
     this.name = 'HttpError';
   }
@@ -16,7 +21,12 @@ export function errorHandler(
   _next: NextFunction,
 ): void {
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message, code: err.code });
+    const body: { error: string; code?: string; details?: unknown } = {
+      error: err.message,
+    };
+    if (err.code !== undefined) body.code = err.code;
+    if (err.details !== undefined) body.details = err.details;
+    res.status(err.status).json(body);
     return;
   }
 

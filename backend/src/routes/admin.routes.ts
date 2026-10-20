@@ -4,6 +4,7 @@ import { asyncHandler } from '../lib/asyncHandler';
 import { requireAuth, requireAdmin } from '../middleware/requireAuth';
 import materialsRouter from './admin.materials.routes';
 import batteryTypesRouter from './admin.batteryTypes.routes';
+import productionRouter from './admin.production.routes';
 
 const router = Router();
 
@@ -29,5 +30,6 @@ router.get(
 // Sub-routers
 router.use('/materials', materialsRouter);
 router.use('/battery-types', batteryTypesRouter);
+router.use('/production-requests', productionRouter);
 
 export default router;

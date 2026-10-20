@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { Prisma, BatteryType } from '@prisma/client';
+import { Prisma, BatteryType, Dispatch } from '@prisma/client';
 import { prisma } from '../lib/prisma';
 import { asyncHandler } from '../lib/asyncHandler';
 import { HttpError } from '../lib/errors';
@@ -41,7 +41,13 @@ const adjustSchema = z.object({
   reason: z.string().trim().min(1, 'Reason is required').max(500),
 });
 
-// ── DTO ───────────────────────────────────────────────
+const dispatchSchema = z.object({
+  quantity: positiveWholeNumber,
+  traderName: z.string().trim().min(1, 'Trader name is required').max(100),
+  notes: z.string().trim().max(500).optional(),
+});
+
+// ── DTOs ──────────────────────────────────────────────
 function toDto(b: BatteryType) {
   return {
     id: b.id,
@@ -54,6 +60,19 @@ function toDto(b: BatteryType) {
   };
 }
 
+function dispatchToDto(d: Dispatch) {
+  return {
+    id: d.id,
+    batteryTypeId: d.batteryTypeId,
+    quantity: d.quantity,
+    traderName: d.traderName,
+    notes: d.notes,
+    dispatchedById: d.dispatchedById,
+    dispatchedAt: d.dispatchedAt.toISOString(),
+  };
+}
+
+// ── Helpers ───────────────────────────────────────────
 function parseId(raw: string): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) throw new HttpError(400, 'Invalid id');
@@ -230,6 +249,83 @@ router.get(
       movements: movements.map(movementToDto),
       total,
       sumQuantityChange: (sumResult._sum.quantityChange ?? new Prisma.Decimal(0)).toString(),
+    });
+  }),
+);
+
+// ── POST /admin/battery-types/:id/dispatches ─────────
+router.post(
+  '/:id/dispatches',
+  asyncHandler(async (req, res) => {
+    const id = parseId(req.params.id);
+    const body = dispatchSchema.parse(req.body);
+    const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
+
+    const result = await prisma.$transaction(async (tx) => {
+      const exists = await tx.batteryType.findFirst({
+        where: { id, companyId: ctx.companyId },
+        select: { id: true, active: true },
+      });
+      if (!exists) throw new HttpError(404, 'Battery type not found');
+
+      const dispatch = await tx.dispatch.create({
+        data: {
+          companyId: ctx.companyId,
+          batteryTypeId: id,
+          quantity: body.quantity,
+          traderName: body.traderName,
+          notes: body.notes,
+          dispatchedById: ctx.userId,
+        },
+      });
+
+      const movement = await recordStockMovement(tx, ctx, {
+        itemType: 'FINISHED_BATTERY',
+        movementType: 'DISPATCH',
+        batteryTypeId: id,
+        quantityChange: new Prisma.Decimal(-body.quantity),
+        reason: body.notes ?? `Dispatch to ${body.traderName}`,
+        referenceType: 'DISPATCH',
+        referenceId: dispatch.id,
+      });
+
+      return { dispatch, movement };
+    });
+
+    const bt = await prisma.batteryType.findUnique({ where: { id } });
+    res.status(201).json({
+      dispatch: dispatchToDto(result.dispatch),
+      movement: movementToDto(result.movement),
+      batteryType: toDto(bt!),
+    });
+  }),
+);
+
+// ── GET /admin/battery-types/:id/dispatches ──────────
+router.get(
+  '/:id/dispatches',
+  asyncHandler(async (req, res) => {
+    const id = parseId(req.params.id);
+    await loadOwnedBatteryType(id, req.user!.companyId);
+
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+
+    const where = { companyId: req.user!.companyId, batteryTypeId: id };
+
+    const [dispatches, total] = await Promise.all([
+      prisma.dispatch.findMany({
+        where,
+        orderBy: [{ dispatchedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        skip: offset,
+      }),
+      prisma.dispatch.count({ where }),
+    ]);
+
+    res.json({
+      dispatches: dispatches.map(dispatchToDto),
+      total,
     });
   }),
 );

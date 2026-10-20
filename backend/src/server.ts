@@ -3,6 +3,7 @@ import cors from 'cors';
 import { checkDb, closeDb } from './db';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
+import productionRoutes from './routes/production.routes';
 import { errorHandler, notFoundHandler } from './lib/errors';
 
 const app = express();
@@ -39,11 +40,10 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// Domain routes
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
+app.use('/production-requests', productionRoutes);
 
-// Order matters: 404 then error handler
 app.use(notFoundHandler);
 app.use(errorHandler);
 
