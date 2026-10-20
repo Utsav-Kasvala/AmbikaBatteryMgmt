@@ -6,6 +6,7 @@ import adminRoutes from './routes/admin.routes';
 import productionRoutes from './routes/production.routes';
 import batteryTypesPublicRoutes from './routes/battery-types.public.routes';
 import { errorHandler, notFoundHandler } from './lib/errors';
+import { verifyEmailConfig } from './lib/email';
 
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
@@ -51,6 +52,7 @@ app.use(errorHandler);
 
 const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`[backend] listening on http://0.0.0.0:${PORT}`);
+  void verifyEmailConfig();
 });
 
 for (const sig of ['SIGINT', 'SIGTERM'] as const) {

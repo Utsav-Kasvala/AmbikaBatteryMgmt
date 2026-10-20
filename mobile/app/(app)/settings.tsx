@@ -74,6 +74,31 @@ export default function SettingsScreen() {
             >
               Manage Battery Types
             </Button>
+            <Divider style={{ marginVertical: 4 }} />
+            <Button
+              mode="text"
+              icon="truck-delivery"
+              onPress={() => router.push('/(app)/dispatches')}
+              style={{ alignSelf: 'stretch', justifyContent: 'flex-start' }}
+            >
+              Dispatches
+            </Button>
+            <Button
+              mode="text"
+              icon="package-down"
+              onPress={() => router.push('/(app)/receipts')}
+              style={{ alignSelf: 'stretch', justifyContent: 'flex-start' }}
+            >
+              Material Receipts
+            </Button>
+            <Button
+              mode="text"
+              icon="tune-vertical"
+              onPress={() => router.push('/(app)/adjustments')}
+              style={{ alignSelf: 'stretch', justifyContent: 'flex-start' }}
+            >
+              Stock Adjustments
+            </Button>
           </Card.Content>
         </Card>
       )}

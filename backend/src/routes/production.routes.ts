@@ -68,12 +68,19 @@ export async function buildSnapshot(
 
 // ── DTO ───────────────────────────────────────────────
 export function toDto(
-  r: ProductionRequest & { batteryType?: { name: string } | null },
+  r: ProductionRequest & {
+    batteryType?: { name: string } | null;
+    requestedBy?: { name: string; email: string } | null;
+  },
 ) {
   return {
     id: r.id,
     batteryTypeId: r.batteryTypeId,
     batteryTypeName: r.batteryType?.name ?? null,
+    requestedById: r.requestedById,
+    // Only populated where the query includes `requestedBy` (admin views)
+    requestedByName: r.requestedBy?.name ?? null,
+    requestedByEmail: r.requestedBy?.email ?? null,
     recipeVersionId: r.recipeVersionId,
     quantity: r.quantity,
     status: r.status,
@@ -152,8 +159,9 @@ router.get(
     const statusFilter =
       req.query.status === 'PENDING' ||
       req.query.status === 'APPROVED' ||
-      req.query.status === 'REJECTED'
-        ? { status: req.query.status as 'PENDING' | 'APPROVED' | 'REJECTED' }
+      req.query.status === 'REJECTED' ||
+      req.query.status === 'REVERSED'
+        ? { status: req.query.status as 'PENDING' | 'APPROVED' | 'REJECTED' | 'REVERSED' }
         : {};
 
     const requests = await prisma.productionRequest.findMany({

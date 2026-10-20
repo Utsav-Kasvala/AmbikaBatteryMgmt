@@ -5,9 +5,10 @@ import {
   HelperText, Text, TextInput,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import {
   AdminBatteryType, RawMaterial, RecipeDetail, RecipeSummary,
-  useActiveRecipe, useAddBatteryTypeOpeningStock, useAdminBatteryTypes,
+  useActiveRecipe, useAdminBatteryTypes,
   useBatteryTypeMovements, useCreateBatteryType, useCreateRecipeVersion,
   useMaterials, useRecipeVersion, useRecipeVersions, useUpdateBatteryType,
 } from '../../src/api/hooks';
@@ -111,7 +112,7 @@ function CreateBatteryTypeModal({ visible, onClose }: { visible: boolean; onClos
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }}>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }} keyboardShouldPersistTaps="handled">
           <Text variant="headlineSmall" style={styles.modalTitle}>New Battery Type</Text>
           <Text style={styles.fieldLabel}>Name</Text>
           <TextInput mode="outlined" value={name} onChangeText={setName} placeholder="e.g. AA-2000mAh" />
@@ -137,7 +138,7 @@ function EditBatteryTypeModal({
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }}>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }} keyboardShouldPersistTaps="handled">
           <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
             {view !== 'main' && (
               <Button compact icon="arrow-left" onPress={() => setView('main')}>
@@ -191,11 +192,9 @@ function MainView({
   onChangeView: (v: EditView) => void;
 }) {
   const update = useUpdateBatteryType();
-  const opening = useAddBatteryTypeOpeningStock();
+  const router = useRouter();
   const [name, setName] = useState(batteryType.name);
   const [threshold, setThreshold] = useState(String(batteryType.lowStockThreshold));
-  const [openingQty, setOpeningQty] = useState('');
-  const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
 
   const save = () => {
@@ -205,19 +204,6 @@ function MainView({
     update.mutate(
       { id: batteryType.id, name: name.trim(), lowStockThreshold: th },
       { onError: (e: Error) => setError(e.message) },
-    );
-  };
-
-  const addStock = () => {
-    setError(null);
-    const qty = Number(openingQty);
-    if (!Number.isInteger(qty) || qty <= 0) { setError('Quantity must be a positive whole number'); return; }
-    opening.mutate(
-      { id: batteryType.id, quantity: qty, reason: reason.trim() || undefined },
-      {
-        onSuccess: () => { setOpeningQty(''); setReason(''); },
-        onError: (e: Error) => setError(e.message),
-      },
     );
   };
 
@@ -244,17 +230,14 @@ function MainView({
 
       <Divider style={{ marginVertical: 8 }} />
 
-      <Text style={styles.fieldLabel}>Add opening stock</Text>
-      <TextInput
-        mode="outlined" value={openingQty} onChangeText={setOpeningQty}
-        placeholder="e.g. 100" keyboardType="number-pad"
-      />
-      <TextInput
-        mode="outlined" value={reason} onChangeText={setReason}
-        placeholder="Reason (optional)"
-      />
-      <Button mode="outlined" onPress={addStock} loading={opening.isPending} disabled={opening.isPending || !openingQty}>
-        Add stock
+      {/* Stock only changes through Stock Adjustments (with a reason) */}
+      <Text style={styles.hint}>To add or remove stock, use Stock Adjustments.</Text>
+      <Button
+        mode="outlined"
+        icon="tune-vertical"
+        onPress={() => { onClose(); router.push('/(app)/adjustments'); }}
+      >
+        Adjust stock
       </Button>
 
       <Divider style={{ marginVertical: 8 }} />

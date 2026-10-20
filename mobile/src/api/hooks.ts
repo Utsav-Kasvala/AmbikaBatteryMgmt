@@ -7,6 +7,10 @@ export type ProductionRequest = {
   id: number;
   batteryTypeId: number;
   batteryTypeName: string | null;
+  requestedById: number;
+  /** Only present on admin endpoints */
+  requestedByName?: string | null;
+  requestedByEmail?: string | null;
   recipeVersionId: number;
   quantity: number;
   status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'DELETED' | 'REVERSED';
@@ -60,7 +64,7 @@ function useTokenAndRole() {
 }
 
 // ── Queries ───────────────────────────────────────────
-export function useRequests(status?: 'PENDING' | 'APPROVED' | 'REJECTED') {
+export function useRequests(status?: 'PENDING' | 'APPROVED' | 'REJECTED' | 'REVERSED') {
   const { token, isAdmin, signedIn } = useTokenAndRole();
 
   return useQuery({
@@ -116,6 +120,10 @@ function useInvalidateAfterChange() {
   return () => {
     void qc.invalidateQueries({ queryKey: ['requests'] });
     void qc.invalidateQueries({ queryKey: ['low-stock'] });
+    // Approval/reversal move stock, so inventory views must refresh too
+    void qc.invalidateQueries({ queryKey: ['admin-materials'] });
+    void qc.invalidateQueries({ queryKey: ['admin-battery-types'] });
+    void qc.invalidateQueries({ queryKey: ['battery-types'] });
   };
 }
 
@@ -362,23 +370,6 @@ export function useUpdateMaterial() {
   });
 }
 
-export function useAddMaterialOpeningStock() {
-  const { token } = useTokenAndRole();
-  const invalidate = useInvalidateInventory();
-  return useMutation({
-    mutationFn: async (input: { id: number; quantity: string; reason?: string }) => {
-      if (!token) throw new Error('Not signed in');
-      const { id, ...body } = input;
-      const res = await apiRequest(`/admin/materials/${id}/opening-stock`, {
-        method: 'POST', body, token,
-      });
-      if (res.networkError) throw new Error('Cannot reach server');
-      if (!res.ok) throw new Error(extractErrorMessage(res.json, 'Opening stock failed'));
-    },
-    onSuccess: invalidate,
-  });
-}
-
 export function useCreateBatteryType() {
   const { token } = useTokenAndRole();
   const invalidate = useInvalidateInventory();
@@ -410,23 +401,6 @@ export function useUpdateBatteryType() {
       });
       if (res.networkError) throw new Error('Cannot reach server');
       if (!res.ok) throw new Error(extractErrorMessage(res.json, 'Update failed'));
-    },
-    onSuccess: invalidate,
-  });
-}
-
-export function useAddBatteryTypeOpeningStock() {
-  const { token } = useTokenAndRole();
-  const invalidate = useInvalidateInventory();
-  return useMutation({
-    mutationFn: async (input: { id: number; quantity: number; reason?: string }) => {
-      if (!token) throw new Error('Not signed in');
-      const { id, ...body } = input;
-      const res = await apiRequest(`/admin/battery-types/${id}/opening-stock`, {
-        method: 'POST', body, token,
-      });
-      if (res.networkError) throw new Error('Cannot reach server');
-      if (!res.ok) throw new Error(extractErrorMessage(res.json, 'Opening stock failed'));
     },
     onSuccess: invalidate,
   });
@@ -535,6 +509,202 @@ export function useCreateRecipeVersion() {
       void qc.invalidateQueries({ queryKey: ['recipe-versions', vars.batteryTypeId] });
       void qc.invalidateQueries({ queryKey: ['recipe-version'] });
       void qc.invalidateQueries({ queryKey: ['battery-types'] });
+    },
+  });
+}
+
+// ═══════════════════════════════════════════════════════════
+// OPERATIONS HOOKS (added in 6)
+// ═══════════════════════════════════════════════════════════
+
+// Error that keeps the backend's `code` + `details` so screens can render
+// structured failures (e.g. the reversal battery-stock guard).
+export class ApiError extends Error {
+  constructor(message: string, public code?: string, public details?: unknown) {
+    super(message);
+    this.name = 'ApiError';
+  }
+}
+
+function toApiError(json: unknown, fallback: string): ApiError {
+  const body = (json && typeof json === 'object' ? json : {}) as {
+    code?: unknown;
+    details?: unknown;
+  };
+  return new ApiError(
+    extractErrorMessage(json, fallback),
+    typeof body.code === 'string' ? body.code : undefined,
+    body.details,
+  );
+}
+
+export type Dispatch = {
+  id: number;
+  batteryTypeId: number;
+  quantity: number;
+  traderName: string;
+  notes: string | null;
+  batteryTypeName?: string; // only on the company-wide list
+  dispatchedById: number;
+  dispatchedAt: string;
+};
+
+export type MaterialReceipt = {
+  id: number;
+  rawMaterialId: number;
+  rawMaterialName?: string; // only on the company-wide list
+  rawMaterialUnit?: RawMaterial['unit'];
+  quantity: string;
+  notes: string | null;
+  receivedById: number;
+  receivedAt: string;
+};
+
+export type ReversalShortfall = {
+  batteryTypeId: number;
+  batteryTypeName: string;
+  required: string;
+  available: string;
+};
+
+// ── Queries ───────────────────────────────────────────
+// `null` id = company-wide list across all items
+export function useDispatches(batteryTypeId: number | null) {
+  const { token, isAdmin, signedIn } = useTokenAndRole();
+  return useQuery({
+    queryKey: ['dispatches', batteryTypeId ?? 'all'],
+    enabled: signedIn && isAdmin,
+    queryFn: async () => {
+      if (!token) throw new Error('Not signed in');
+      const path = batteryTypeId
+        ? `/admin/battery-types/${batteryTypeId}/dispatches?limit=100`
+        : '/admin/dispatches?limit=100';
+      const res = await apiRequest<{ dispatches: Dispatch[]; total: number }>(path, { token });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw new Error('Failed to load dispatches');
+      return res.json!;
+    },
+  });
+}
+
+export function useReceipts(materialId: number | null) {
+  const { token, isAdmin, signedIn } = useTokenAndRole();
+  return useQuery({
+    queryKey: ['receipts', materialId ?? 'all'],
+    enabled: signedIn && isAdmin,
+    queryFn: async () => {
+      if (!token) throw new Error('Not signed in');
+      const path = materialId
+        ? `/admin/materials/${materialId}/receipts?limit=100`
+        : '/admin/receipts?limit=100';
+      const res = await apiRequest<{ receipts: MaterialReceipt[]; total: number }>(path, { token });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw new Error('Failed to load receipts');
+      return res.json!;
+    },
+  });
+}
+
+// ── Mutations ─────────────────────────────────────────
+export function useCreateDispatch() {
+  const { token } = useTokenAndRole();
+  const qc = useQueryClient();
+  const invalidate = useInvalidateInventory();
+  return useMutation({
+    mutationFn: async (input: {
+      batteryTypeId: number;
+      quantity: number;
+      traderName: string;
+      notes?: string;
+    }) => {
+      if (!token) throw new Error('Not signed in');
+      const { batteryTypeId, ...body } = input;
+      const res = await apiRequest(`/admin/battery-types/${batteryTypeId}/dispatches`, {
+        method: 'POST', body, token,
+      });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw toApiError(res.json, 'Dispatch failed');
+    },
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ['dispatches'] });
+    },
+  });
+}
+
+export function useCreateReceipt() {
+  const { token } = useTokenAndRole();
+  const qc = useQueryClient();
+  const invalidate = useInvalidateInventory();
+  return useMutation({
+    mutationFn: async (input: { materialId: number; quantity: string; notes?: string }) => {
+      if (!token) throw new Error('Not signed in');
+      const { materialId, ...body } = input;
+      const res = await apiRequest(`/admin/materials/${materialId}/receipts`, {
+        method: 'POST', body, token,
+      });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw toApiError(res.json, 'Receipt failed');
+    },
+    onSuccess: () => {
+      invalidate();
+      void qc.invalidateQueries({ queryKey: ['receipts'] });
+    },
+  });
+}
+
+export function useAdjustMaterial() {
+  const { token } = useTokenAndRole();
+  const invalidate = useInvalidateInventory();
+  return useMutation({
+    mutationFn: async (input: { id: number; quantityChange: string; reason: string }) => {
+      if (!token) throw new Error('Not signed in');
+      const { id, ...body } = input;
+      const res = await apiRequest(`/admin/materials/${id}/adjust`, {
+        method: 'POST', body, token,
+      });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw toApiError(res.json, 'Adjustment failed');
+    },
+    onSuccess: invalidate,
+  });
+}
+
+export function useAdjustBatteryType() {
+  const { token } = useTokenAndRole();
+  const invalidate = useInvalidateInventory();
+  return useMutation({
+    mutationFn: async (input: { id: number; quantityChange: number; reason: string }) => {
+      if (!token) throw new Error('Not signed in');
+      const { id, ...body } = input;
+      const res = await apiRequest(`/admin/battery-types/${id}/adjust`, {
+        method: 'POST', body, token,
+      });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw toApiError(res.json, 'Adjustment failed');
+    },
+    onSuccess: invalidate,
+  });
+}
+
+export function useReverseRequest() {
+  const { token } = useTokenAndRole();
+  const invalidateRequests = useInvalidateAfterChange();
+  const invalidateInventory = useInvalidateInventory();
+  return useMutation({
+    mutationFn: async (input: { id: number; reason: string }) => {
+      if (!token) throw new Error('Not signed in');
+      const res = await apiRequest(`/admin/production-requests/${input.id}/reverse`, {
+        method: 'POST',
+        body: { reason: input.reason },
+        token,
+      });
+      if (res.networkError) throw new Error('Cannot reach server');
+      if (!res.ok) throw toApiError(res.json, 'Reversal failed');
+    },
+    onSuccess: () => {
+      invalidateRequests();
+      invalidateInventory();
     },
   });
 }

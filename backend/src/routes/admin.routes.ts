@@ -89,6 +89,76 @@ router.get(
   }),
 );
 
+// GET /admin/dispatches — company-wide dispatch history, newest first
+router.get(
+  '/dispatches',
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const where = { companyId: req.user!.companyId };
+
+    const [dispatches, total] = await Promise.all([
+      prisma.dispatch.findMany({
+        where,
+        include: { batteryType: { select: { name: true } } },
+        orderBy: [{ dispatchedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        skip: offset,
+      }),
+      prisma.dispatch.count({ where }),
+    ]);
+
+    res.json({
+      dispatches: dispatches.map((d) => ({
+        id: d.id,
+        batteryTypeId: d.batteryTypeId,
+        batteryTypeName: d.batteryType.name,
+        quantity: d.quantity,
+        traderName: d.traderName,
+        notes: d.notes,
+        dispatchedById: d.dispatchedById,
+        dispatchedAt: d.dispatchedAt.toISOString(),
+      })),
+      total,
+    });
+  }),
+);
+
+// GET /admin/receipts — company-wide material receipt history, newest first
+router.get(
+  '/receipts',
+  asyncHandler(async (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 100, 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    const where = { companyId: req.user!.companyId };
+
+    const [receipts, total] = await Promise.all([
+      prisma.materialReceipt.findMany({
+        where,
+        include: { rawMaterial: { select: { name: true, unit: true } } },
+        orderBy: [{ receivedAt: 'desc' }, { id: 'desc' }],
+        take: limit,
+        skip: offset,
+      }),
+      prisma.materialReceipt.count({ where }),
+    ]);
+
+    res.json({
+      receipts: receipts.map((r) => ({
+        id: r.id,
+        rawMaterialId: r.rawMaterialId,
+        rawMaterialName: r.rawMaterial.name,
+        rawMaterialUnit: r.rawMaterial.unit,
+        quantity: r.quantity.toString(),
+        notes: r.notes,
+        receivedById: r.receivedById,
+        receivedAt: r.receivedAt.toISOString(),
+      })),
+      total,
+    });
+  }),
+);
+
 // Sub-routers
 router.use('/materials', materialsRouter);
 router.use('/battery-types', batteryTypesRouter);

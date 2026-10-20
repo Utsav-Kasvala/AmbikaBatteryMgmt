@@ -31,11 +31,6 @@ const updateSchema = z
   .strict()
   .refine((d) => Object.keys(d).length > 0, { message: 'At least one field is required' });
 
-const openingStockSchema = z.object({
-  quantity: positiveWholeNumber,
-  reason: z.string().trim().max(500).optional(),
-});
-
 const adjustSchema = z.object({
   quantityChange: signedWholeNumber,
   reason: z.string().trim().min(1, 'Reason is required').max(500),
@@ -148,39 +143,6 @@ router.patch(
   }),
 );
 
-// ── POST /admin/battery-types/:id/opening-stock ──────
-router.post(
-  '/:id/opening-stock',
-  asyncHandler(async (req, res) => {
-    const id = parseId(req.params.id);
-    const body = openingStockSchema.parse(req.body);
-    const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
-
-    const result = await prisma.$transaction(async (tx) => {
-      const exists = await tx.batteryType.findFirst({
-        where: { id, companyId: ctx.companyId },
-        select: { id: true },
-      });
-      if (!exists) throw new HttpError(404, 'Battery type not found');
-
-      return recordStockMovement(tx, ctx, {
-        itemType: 'FINISHED_BATTERY',
-        movementType: 'OPENING_STOCK',
-        batteryTypeId: id,
-        quantityChange: new Prisma.Decimal(body.quantity),
-        reason: body.reason ?? 'Opening stock',
-        referenceType: 'OPENING_STOCK',
-      });
-    });
-
-    const bt = await prisma.batteryType.findUnique({ where: { id } });
-    res.status(201).json({
-      movement: movementToDto(result),
-      batteryType: toDto(bt!),
-    });
-  }),
-);
-
 // ── POST /admin/battery-types/:id/adjust ─────────────
 router.post(
   '/:id/adjust',
@@ -262,11 +224,15 @@ router.post(
     const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
 
     const result = await prisma.$transaction(async (tx) => {
-      const exists = await tx.batteryType.findFirst({
-        where: { id, companyId: ctx.companyId },
-        select: { id: true, active: true },
-      });
-      if (!exists) throw new HttpError(404, 'Battery type not found');
+      // Lock the battery row BEFORE inserting the dispatch: the insert's FK takes a
+      // shared lock on it, and two concurrent dispatches upgrading from shared to
+      // FOR UPDATE (inside recordStockMovement) deadlock each other.
+      const locked = await tx.$queryRaw<{ id: number }[]>`
+        SELECT id FROM battery_types
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
+        FOR UPDATE
+      `;
+      if (locked.length === 0) throw new HttpError(404, 'Battery type not found');
 
       const dispatch = await tx.dispatch.create({
         data: {

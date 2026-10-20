@@ -5,9 +5,10 @@ import {
   RadioButton, Text, TextInput,
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useRouter } from 'expo-router';
 import {
   RawMaterial,
-  useAddMaterialOpeningStock, useCreateMaterial, useMaterialMovements,
+  useCreateMaterial, useMaterialMovements,
   useMaterials, useUpdateMaterial,
 } from '../../src/api/hooks';
 
@@ -115,7 +116,7 @@ function CreateMaterialModal({ visible, onClose }: { visible: boolean; onClose: 
   return (
     <Modal visible={visible} animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }}>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }} keyboardShouldPersistTaps="handled">
           <Text variant="headlineSmall" style={styles.modalTitle}>New Raw Material</Text>
 
           <Text style={styles.fieldLabel}>Name</Text>
@@ -153,11 +154,9 @@ function CreateMaterialModal({ visible, onClose }: { visible: boolean; onClose: 
 // ── Edit modal (update + opening stock + ledger) ─────
 function EditMaterialModal({ material, onClose }: { material: RawMaterial; onClose: () => void }) {
   const update = useUpdateMaterial();
-  const opening = useAddMaterialOpeningStock();
+  const router = useRouter();
   const [name, setName] = useState(material.name);
   const [threshold, setThreshold] = useState(material.lowStockThreshold);
-  const [openingQty, setOpeningQty] = useState('');
-  const [reason, setReason] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [showLedger, setShowLedger] = useState(false);
 
@@ -166,21 +165,6 @@ function EditMaterialModal({ material, onClose }: { material: RawMaterial; onClo
     update.mutate(
       { id: material.id, name: name.trim(), lowStockThreshold: threshold },
       { onError: (e: Error) => setError(e.message) },
-    );
-  };
-
-  const addStock = () => {
-    setError(null);
-    if (!/^\d+(\.\d{1,4})?$/.test(openingQty) || Number(openingQty) <= 0) {
-      setError('Quantity must be a positive decimal');
-      return;
-    }
-    opening.mutate(
-      { id: material.id, quantity: openingQty, reason: reason.trim() || undefined },
-      {
-        onSuccess: () => { setOpeningQty(''); setReason(''); },
-        onError: (e: Error) => setError(e.message),
-      },
     );
   };
 
@@ -194,7 +178,7 @@ function EditMaterialModal({ material, onClose }: { material: RawMaterial; onClo
   return (
     <Modal visible animationType="slide" onRequestClose={onClose}>
       <SafeAreaView style={{ flex: 1, backgroundColor: '#fff' }}>
-        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }}>
+        <ScrollView contentContainerStyle={{ padding: 20, gap: 10 }} keyboardShouldPersistTaps="handled">
           <Text variant="headlineSmall" style={styles.modalTitle}>{material.name}</Text>
           <Text style={styles.hint}>
             Current stock: {material.currentStock} {material.unit}
@@ -216,22 +200,14 @@ function EditMaterialModal({ material, onClose }: { material: RawMaterial; onClo
 
               <Divider style={{ marginVertical: 12 }} />
 
-              <Text style={styles.fieldLabel}>Add opening stock</Text>
-              <TextInput
+              {/* Stock only changes through Stock Adjustments (with a reason) */}
+              <Text style={styles.hint}>To add or remove stock, use Stock Adjustments.</Text>
+              <Button
                 mode="outlined"
-                value={openingQty}
-                onChangeText={setOpeningQty}
-                placeholder={`e.g. 10.5 ${material.unit}`}
-                keyboardType="decimal-pad"
-              />
-              <TextInput
-                mode="outlined"
-                value={reason}
-                onChangeText={setReason}
-                placeholder="Reason (optional)"
-              />
-              <Button mode="outlined" onPress={addStock} loading={opening.isPending} disabled={opening.isPending || !openingQty}>
-                Add stock
+                icon="tune-vertical"
+                onPress={() => { onClose(); router.push('/(app)/adjustments'); }}
+              >
+                Adjust stock
               </Button>
 
               <Divider style={{ marginVertical: 12 }} />

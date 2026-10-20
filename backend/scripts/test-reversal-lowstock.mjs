@@ -1,4 +1,6 @@
+import { withLoginCode } from './_auth.mjs';
 const BASE = 'http://localhost:3000';
+const req = withLoginCode(rawReq);
 let failed = 0;
 
 function assert(cond, msg) {
@@ -6,7 +8,7 @@ function assert(cond, msg) {
   else { console.error('❌', msg); failed++; }
 }
 
-async function req(method, path, body, token) {
+async function rawReq(method, path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
@@ -45,7 +47,7 @@ async function main() {
   await req('POST', `/admin/battery-types/${btid}/recipes`, {
     items: [{ rawMaterialId: copperId, quantityPerUnit: '0.5' }],
   }, tA);
-  await req('POST', `/admin/materials/${copperId}/opening-stock`, { quantity: '10' }, tA);
+  await req('POST', `/admin/materials/${copperId}/adjust`, { quantityChange: '10', reason: 'Initial stock' }, tA);
   assert(true, 'setup complete');
 
   console.log('\n── Low-stock: empty initially ─────────────────────');

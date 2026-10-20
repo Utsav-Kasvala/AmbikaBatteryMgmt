@@ -11,9 +11,10 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "prisma:studio": "prisma studio",
+    "test:auth": "node scripts/test-auth-otp.mjs",
     "test:isolation": "node scripts/test-isolation.mjs",
     "test:materials": "node scripts/test-materials.mjs",
-    "test:all": "npm run test:isolation && npm run test:materials && npm run test:batteryTypes && npm run test:recipes && npm run test:stock && npm run test:productionRequests && npm run test:approval && npm run test:receiptsDispatches && npm run test:reversalLowStock",
+    "test:all": "npm run test:auth && npm run test:isolation && npm run test:materials && npm run test:batteryTypes && npm run test:recipes && npm run test:stock && npm run test:productionRequests && npm run test:approval && npm run test:receiptsDispatches && npm run test:reversalLowStock",
     "test:batteryTypes": "node scripts/test-batteryTypes.mjs",
     "test:recipes": "node scripts/test-recipes.mjs",
     "test:stock": "node scripts/test-stock.mjs",
@@ -28,6 +29,7 @@
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
     "express": "^4.21.2",
+    "nodemailer": "^6.9.16",
     "pg": "^8.13.1",
     "prisma": "^5.22.0",
     "zod": "^3.25.76"
@@ -35,6 +37,7 @@
   "devDependencies": {
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
+    "@types/nodemailer": "^6.4.17",
     "@types/node": "^20.17.10",
     "@types/pg": "^8.11.10",
     "tsx": "^4.19.2",

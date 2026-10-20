@@ -32,11 +32,6 @@ const updateSchema = z
   .strict()
   .refine((d) => Object.keys(d).length > 0, { message: 'At least one field is required' });
 
-const openingStockSchema = z.object({
-  quantity: positiveDecimal,
-  reason: z.string().trim().max(500).optional(),
-});
-
 const adjustSchema = z.object({
   quantityChange: signedDecimal,
   reason: z.string().trim().min(1, 'Reason is required').max(500),
@@ -153,39 +148,6 @@ router.patch(
   }),
 );
 
-// ── POST /admin/materials/:id/opening-stock ──────────
-router.post(
-  '/:id/opening-stock',
-  asyncHandler(async (req, res) => {
-    const id = parseId(req.params.id);
-    const body = openingStockSchema.parse(req.body);
-    const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
-
-    const result = await prisma.$transaction(async (tx) => {
-      const exists = await tx.rawMaterial.findFirst({
-        where: { id, companyId: ctx.companyId },
-        select: { id: true },
-      });
-      if (!exists) throw new HttpError(404, 'Material not found');
-
-      return recordStockMovement(tx, ctx, {
-        itemType: 'RAW_MATERIAL',
-        movementType: 'OPENING_STOCK',
-        rawMaterialId: id,
-        quantityChange: new Prisma.Decimal(body.quantity),
-        reason: body.reason ?? 'Opening stock',
-        referenceType: 'OPENING_STOCK',
-      });
-    });
-
-    const material = await prisma.rawMaterial.findUnique({ where: { id } });
-    res.status(201).json({
-      movement: movementToDto(result),
-      material: toDto(material!),
-    });
-  }),
-);
-
 // ── POST /admin/materials/:id/adjust ─────────────────
 router.post(
   '/:id/adjust',
@@ -268,11 +230,15 @@ router.post(
     const ctx = { companyId: req.user!.companyId, userId: req.user!.userId };
 
     const result = await prisma.$transaction(async (tx) => {
-      const exists = await tx.rawMaterial.findFirst({
-        where: { id, companyId: ctx.companyId },
-        select: { id: true, active: true },
-      });
-      if (!exists) throw new HttpError(404, 'Material not found');
+      // Lock the material row BEFORE inserting the receipt: the insert's FK takes a
+      // shared lock on it, and two concurrent receipts upgrading from shared to
+      // FOR UPDATE (inside recordStockMovement) deadlock each other.
+      const locked = await tx.$queryRaw<{ id: number }[]>`
+        SELECT id FROM raw_materials
+        WHERE id = ${id} AND "companyId" = ${ctx.companyId}
+        FOR UPDATE
+      `;
+      if (locked.length === 0) throw new HttpError(404, 'Material not found');
 
       const receipt = await tx.materialReceipt.create({
         data: {

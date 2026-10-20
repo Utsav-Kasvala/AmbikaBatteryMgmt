@@ -44,7 +44,10 @@ router.get(
         status: { not: 'DELETED' },
         ...statusFilter,
       },
-      include: { batteryType: { select: { name: true } } },
+      include: {
+        batteryType: { select: { name: true } },
+        requestedBy: { select: { name: true, email: true } },
+      },
       orderBy: { submittedAt: 'desc' },
       take: 200,
     });
@@ -62,6 +65,10 @@ router.get(
 
     const request = await prisma.productionRequest.findFirst({
       where: { id, companyId, status: { not: 'DELETED' } },
+      include: {
+        batteryType: { select: { name: true } },
+        requestedBy: { select: { name: true, email: true } },
+      },
     });
     if (!request) throw new HttpError(404, 'Request not found');
 

@@ -123,6 +123,21 @@ model Session {
   @@map("sessions")
 }
 
+// One-time email codes for passwordless sign-in / sign-up.
+// Keyed by email (not user) because a code is also needed before the user exists.
+model LoginCode {
+  id         Int       @id @default(autoincrement())
+  email      String
+  codeHash   String
+  attempts   Int       @default(0)
+  expiresAt  DateTime
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([email, createdAt])
+  @@map("login_codes")
+}
+
 model RawMaterial {
   id                Int          @id @default(autoincrement())
   companyId         Int

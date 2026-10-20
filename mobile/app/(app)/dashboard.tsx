@@ -38,7 +38,7 @@ function UserDashboard() {
         icon="plus"
         style={styles.primaryButton}
         contentStyle={{ paddingVertical: 6 }}
-        onPress={() => router.push('/(app)/requests')}
+        onPress={() => router.push({ pathname: '/(app)/requests', params: { new: '1' } })}
       >
         Add Production
       </Button>

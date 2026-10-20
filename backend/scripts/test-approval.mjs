@@ -1,4 +1,6 @@
+import { withLoginCode } from './_auth.mjs';
 const BASE = 'http://localhost:3000';
+const req = withLoginCode(rawReq);
 let failed = 0;
 
 function assert(cond, msg) {
@@ -6,7 +8,7 @@ function assert(cond, msg) {
   else { console.error('❌', msg); failed++; }
 }
 
-async function req(method, path, body, token) {
+async function rawReq(method, path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
@@ -54,7 +56,7 @@ async function main() {
 
   console.log('\n── Insufficient materials blocks approval ─────────');
   // Copper: 0, Acid: 100. Need 0.5 copper + 2 acid for 100 units → copper short
-  await req('POST', `/admin/materials/${acidId}/opening-stock`, { quantity: '100' }, tA);
+  await req('POST', `/admin/materials/${acidId}/adjust`, { quantityChange: '100', reason: 'Initial stock' }, tA);
   const submit1 = await req('POST', '/production-requests',
     { batteryTypeId: btid, quantity: 100 }, tUA);
   const req1Id = submit1.json.request.id;
@@ -90,7 +92,7 @@ async function main() {
   await req('DELETE', `/production-requests/${submit2.json.request.id}`, null, tUA);
 
   console.log('\n── Happy path: approve succeeds ───────────────────');
-  await req('POST', `/admin/materials/${copperId}/opening-stock`, { quantity: '1' }, tA);
+  await req('POST', `/admin/materials/${copperId}/adjust`, { quantityChange: '1', reason: 'Initial stock' }, tA);
   // Now copper=1, acid=100. Need 0.5 + 2 for req1 (100 units) → all sufficient.
 
   const approveOk = await req('POST', `/admin/production-requests/${req1Id}/approve`, null, tA);
@@ -137,8 +139,8 @@ async function main() {
 
   console.log('\n── Concurrency: two approves in parallel ──────────');
   // Set up a fresh pending request with sufficient stock
-  await req('POST', `/admin/materials/${copperId}/opening-stock`, { quantity: '10' }, tA);
-  await req('POST', `/admin/materials/${acidId}/opening-stock`, { quantity: '100' }, tA);
+  await req('POST', `/admin/materials/${copperId}/adjust`, { quantityChange: '10', reason: 'Initial stock' }, tA);
+  await req('POST', `/admin/materials/${acidId}/adjust`, { quantityChange: '100', reason: 'Initial stock' }, tA);
   const submit3 = await req('POST', '/production-requests',
     { batteryTypeId: btid, quantity: 10 }, tUA);
   const req3Id = submit3.json.request.id;

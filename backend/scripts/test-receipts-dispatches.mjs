@@ -1,4 +1,6 @@
+import { withLoginCode } from './_auth.mjs';
 const BASE = 'http://localhost:3000';
+const req = withLoginCode(rawReq);
 let failed = 0;
 
 function assert(cond, msg) {
@@ -6,7 +8,7 @@ function assert(cond, msg) {
   else { console.error('❌', msg); failed++; }
 }
 
-async function req(method, path, body, token) {
+async function rawReq(method, path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
@@ -94,7 +96,7 @@ async function main() {
 
   console.log('\n── Dispatch: happy path ───────────────────────────');
   // Give the battery some stock via opening stock
-  await req('POST', `/admin/battery-types/${btid}/opening-stock`, { quantity: 100 }, tA);
+  await req('POST', `/admin/battery-types/${btid}/adjust`, { quantityChange: 100, reason: 'Initial stock' }, tA);
   const d1 = await req('POST', `/admin/battery-types/${btid}/dispatches`,
     { quantity: 25, traderName: 'Ahmed Traders', notes: 'Order #42' }, tA);
   assert(d1.status === 201, 'dispatch → 201');

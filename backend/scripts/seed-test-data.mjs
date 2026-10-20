@@ -1,6 +1,8 @@
+import { withLoginCode } from './_auth.mjs';
 const BASE = 'http://localhost:3000';
+const req = withLoginCode(rawReq);
 
-async function req(method, path, body, token) {
+async function rawReq(method, path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
@@ -44,8 +46,8 @@ async function main() {
 
   console.log('\n── Adding opening stock (100 each) ────────────────');
   for (const m of materials) {
-    const r = await req('POST', `/admin/materials/${m.id}/opening-stock`,
-      { quantity: '100', reason: 'Seed opening stock' }, token);
+    const r = await req('POST', `/admin/materials/${m.id}/adjust`,
+      { quantityChange: '100', reason: 'Seed initial stock' }, token);
     if (r.status !== 201) throw new Error(`opening stock ${m.name}: ${JSON.stringify(r.json)}`);
     console.log(`✅ ${m.name}: 100 ${m.unit}`);
   }
@@ -79,11 +81,12 @@ async function main() {
   console.log('\n' + '═'.repeat(64));
   console.log('🎉 Seed complete. On your phone:');
   console.log('');
-  console.log(`   1. Sign in as ADMIN:      ${reg.json.user.email}`);
-  console.log(`   2. Note the invitation code: ${reg.json.company.invitationCode}`);
-  console.log(`   3. Sign out, JOIN with that code + a fresh email`);
-  console.log(`   4. Submit production requests as a user`);
-  console.log(`   5. Sign back in as admin to approve`);
+  console.log(`   ADMIN:  Sign in → ${reg.json.user.email}`);
+  console.log(`   USER:   Join → any other email + code ${reg.json.company.invitationCode}`);
+  console.log('');
+  console.log('   Sign-in codes: shown in the app in dev mode, or in the backend');
+  console.log('   log (docker compose logs -f backend) / your inbox with Resend.');
+  console.log('   Switch accounts with Settings → Sign out, then Sign in again.');
   console.log('');
   console.log('   Stock currently:');
   console.log(`   Materials:     100 units each (${materials.map(m => m.name).join(', ')})`);

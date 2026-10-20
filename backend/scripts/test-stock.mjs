@@ -1,4 +1,6 @@
+import { withLoginCode } from './_auth.mjs';
 const BASE = 'http://localhost:3000';
+const req = withLoginCode(rawReq);
 let failed = 0;
 
 function assert(cond, msg) {
@@ -6,7 +8,7 @@ function assert(cond, msg) {
   else { console.error('❌', msg); failed++; }
 }
 
-async function req(method, path, body, token) {
+async function rawReq(method, path, body, token) {
   const headers = { 'Content-Type': 'application/json' };
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${BASE}${path}`, {
@@ -67,18 +69,23 @@ async function main() {
   const tA = a.json.token, tB = b.json.token, tUA = ua.json.token;
   assert(a.status === 201 && b.status === 201 && ua.status === 201, 'setup');
 
-  console.log('\n── Material: opening stock ────────────────────────');
+  console.log('\n── Material: initial stock via adjustment ─────────');
+  // Opening stock was removed; new items start at 0 and are stocked via /adjust.
   const m = await req('POST', '/admin/materials', { name: `Copper ${s}`, unit: 'KG' }, tA);
   const mid = m.json.material.id;
-  const open1 = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '10.5' }, tA);
-  assert(open1.status === 201, 'opening stock → 201');
+  assert(m.json.material.currentStock === '0', 'new material starts at 0');
+  const open1 = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '10.5', reason: 'Initial stock' }, tA);
+  assert(open1.status === 201, 'initial stock adjustment → 201');
   assert(open1.json.material.currentStock === '10.5', 'currentStock = 10.5');
-  assert(open1.json.movement.movementType === 'OPENING_STOCK', 'movementType = OPENING_STOCK');
+  assert(open1.json.movement.movementType === 'ADJUSTMENT', 'movementType = ADJUSTMENT');
   assert(open1.json.movement.resultingBalance === '10.5', 'resultingBalance = 10.5');
 
-  const open2 = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '2.25', reason: 'Correction' }, tA);
-  assert(open2.json.material.currentStock === '12.75', 'second opening stock accumulates → 12.75');
+  const open2 = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '2.25', reason: 'Correction' }, tA);
+  assert(open2.json.material.currentStock === '12.75', 'second addition accumulates → 12.75');
   await assertLedgerInvariant(tA, 'material', mid);
+
+  const gone = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '1' }, tA);
+  assert(gone.status === 404, 'material opening-stock endpoint removed → 404');
 
   console.log('\n── Material: adjustments ──────────────────────────');
   const adjPos = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '3', reason: 'Found extra spool' }, tA);
@@ -103,17 +110,19 @@ async function main() {
   assert(zeroAdj.status === 400, 'zero adjustment → 400');
   const noReason = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '1' }, tA);
   assert(noReason.status === 400, 'adjustment without reason → 400');
-  const negOpen = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '-1' }, tA);
-  assert(negOpen.status === 400, 'negative opening stock → 400');
-  const zeroOpen = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '0' }, tA);
-  assert(zeroOpen.status === 400, 'zero opening stock → 400');
+  const badNum = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '1.23456', reason: 'x' }, tA);
+  assert(badNum.status === 400, '>4 decimal places → 400');
+  const blankReason = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '1', reason: '   ' }, tA);
+  assert(blankReason.status === 400, 'whitespace-only reason → 400');
 
-  console.log('\n── Battery type: opening stock + adjustments ──────');
+  console.log('\n── Battery type: adjustments ──────────────────────');
   const bt = await req('POST', '/admin/battery-types', { name: `AA-${s}` }, tA);
   const btid = bt.json.batteryType.id;
-  const btOpen = await req('POST', `/admin/battery-types/${btid}/opening-stock`, { quantity: 100 }, tA);
-  assert(btOpen.status === 201, 'battery opening stock → 201');
+  const btOpen = await req('POST', `/admin/battery-types/${btid}/adjust`, { quantityChange: 100, reason: 'Initial stock' }, tA);
+  assert(btOpen.status === 201, 'battery addition → 201');
   assert(btOpen.json.batteryType.currentStock === 100, 'currentStock = 100');
+  const btGone = await req('POST', `/admin/battery-types/${btid}/opening-stock`, { quantity: 1 }, tA);
+  assert(btGone.status === 404, 'battery opening-stock endpoint removed → 404');
   const btAdj = await req('POST', `/admin/battery-types/${btid}/adjust`, { quantityChange: -5, reason: 'Broken in storage' }, tA);
   assert(btAdj.status === 201, 'battery adjustment → 201');
   assert(btAdj.json.batteryType.currentStock === 95, 'currentStock = 95');
@@ -127,18 +136,14 @@ async function main() {
   assert(btOverdraft.json.code === 'INSUFFICIENT_STOCK', 'error code INSUFFICIENT_STOCK');
 
   console.log('\n── Isolation ──────────────────────────────────────');
-  const crossOpen = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '1' }, tB);
-  assert(crossOpen.status === 404, "B opening-stock A's material → 404  ← ISOLATION");
   const crossAdj = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '-1', reason: 'x' }, tB);
   assert(crossAdj.status === 404, "B adjusting A's material → 404  ← ISOLATION");
   const crossLedger = await req('GET', `/admin/materials/${mid}/movements`, null, tB);
   assert(crossLedger.status === 404, "B reading A's ledger → 404  ← ISOLATION");
-  const crossBtOpen = await req('POST', `/admin/battery-types/${btid}/opening-stock`, { quantity: 1 }, tB);
-  assert(crossBtOpen.status === 404, "B opening-stock A's battery → 404  ← ISOLATION");
+  const crossBtAdj = await req('POST', `/admin/battery-types/${btid}/adjust`, { quantityChange: 1, reason: 'x' }, tB);
+  assert(crossBtAdj.status === 404, "B adjusting A's battery → 404  ← ISOLATION");
 
   console.log('\n── Role enforcement ───────────────────────────────');
-  const userOpen = await req('POST', `/admin/materials/${mid}/opening-stock`, { quantity: '1' }, tUA);
-  assert(userOpen.status === 403, 'regular user opening-stock → 403');
   const userAdj = await req('POST', `/admin/materials/${mid}/adjust`, { quantityChange: '1', reason: 'x' }, tUA);
   assert(userAdj.status === 403, 'regular user adjusting → 403');
   const userLedger = await req('GET', `/admin/materials/${mid}/movements`, null, tUA);
@@ -149,8 +154,7 @@ async function main() {
   assert(ledger.status === 200, 'GET ledger → 200');
   assert(ledger.json.movements.length >= 4, `ledger has >= 4 movements (has ${ledger.json.movements.length})`);
   const types = ledger.json.movements.map((m) => m.movementType);
-  assert(types.includes('OPENING_STOCK'), 'ledger contains OPENING_STOCK');
-  assert(types.includes('ADJUSTMENT'), 'ledger contains ADJUSTMENT');
+  assert(types.every((t) => t === 'ADJUSTMENT'), 'ledger contains only ADJUSTMENT movements');
   const orderedByTime = ledger.json.movements.every((m, i, arr) =>
     i === 0 || new Date(arr[i - 1].createdAt) <= new Date(m.createdAt),
   );
