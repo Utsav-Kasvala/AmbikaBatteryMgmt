@@ -1,0 +1,24 @@
+# Node
+node_modules/
+npm-debug.log*
+*.log
+
+# Env files (secrets)
+.env
+.env.local
+.env.*.local
+
+# Prisma generated client
+backend/src/generated/
+
+# Expo / React Native
+mobile/.expo/
+mobile/node_modules/
+*.jks
+*.keystore
+
+# Docker
+pgdata/
+
+# OS
+.DS_Store
