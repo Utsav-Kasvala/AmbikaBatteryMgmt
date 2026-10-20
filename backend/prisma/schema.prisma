@@ -1,0 +1,83 @@
+// Prisma schema — Battery Production & Inventory Management
+// Multi-tenant: every company-owned record must be scoped by companyId.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ──────────────────────────────────────────────────────────
+// Enums
+// ──────────────────────────────────────────────────────────
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+enum UserStatus {
+  ACTIVE
+  DEACTIVATED
+}
+
+// ──────────────────────────────────────────────────────────
+// Company (tenant root)
+// ──────────────────────────────────────────────────────────
+
+model Company {
+  id             Int      @id @default(autoincrement())
+  name           String
+  invitationCode String   @unique
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  users User[]
+
+  @@map("companies")
+}
+
+// ──────────────────────────────────────────────────────────
+// User
+// ──────────────────────────────────────────────────────────
+
+model User {
+  id        Int        @id @default(autoincrement())
+  companyId Int
+  email     String
+  name      String
+  role      UserRole   @default(USER)
+  status    UserStatus @default(ACTIVE)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  company  Company   @relation(fields: [companyId], references: [id], onDelete: Restrict)
+  sessions Session[]
+
+  @@unique([companyId, email], name: "company_email_unique")
+  @@index([companyId])
+  @@map("users")
+}
+
+// ──────────────────────────────────────────────────────────
+// Persistent Session (hashed token)
+// ──────────────────────────────────────────────────────────
+
+model Session {
+  id         Int       @id @default(autoincrement())
+  userId     Int
+  tokenHash  String    @unique
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  revokedAt  DateTime?
+  expiresAt  DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([revokedAt])
+  @@map("sessions")
+}

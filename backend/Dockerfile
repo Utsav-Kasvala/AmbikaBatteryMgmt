@@ -1,12 +1,15 @@
-FROM node:20-alpine
+FROM node:20-slim
+
+# Prisma needs openssl on Debian; ca-certificates is for HTTPS calls later
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends openssl ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Install deps first for better layer caching
 COPY package*.json ./
 RUN npm install
 
-# Source (overridden at runtime by volume mount in dev)
 COPY . .
 
 EXPOSE 3000
