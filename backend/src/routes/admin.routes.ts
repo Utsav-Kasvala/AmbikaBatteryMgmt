@@ -27,6 +27,68 @@ router.get(
   }),
 );
 
+// GET /admin/low-stock — items below their configured threshold
+router.get(
+  '/low-stock',
+  asyncHandler(async (req, res) => {
+    const { companyId } = req.user!;
+
+    // Raw materials: column-to-column comparison (currentStock < lowStockThreshold),
+    // which Prisma's `where` cannot express. Raw SQL keeps it in Postgres.
+    // ::text casts preserve decimal precision on the wire.
+    const materials = await prisma.$queryRaw<
+      Array<{
+        id: number;
+        name: string;
+        unit: string;
+        currentStock: string;
+        lowStockThreshold: string;
+        gap: string;
+      }>
+    >`
+      SELECT id,
+             name,
+             unit::text AS unit,
+             trim_scale("currentStock")::text AS "currentStock",
+             trim_scale("lowStockThreshold")::text AS "lowStockThreshold",
+             trim_scale("lowStockThreshold" - "currentStock")::text AS gap
+      FROM raw_materials
+      WHERE "companyId" = ${companyId}
+        AND active = true
+        AND "currentStock" < "lowStockThreshold"
+      ORDER BY ("lowStockThreshold" - "currentStock") DESC, name ASC
+      LIMIT 500
+    `;
+
+    // Batteries: same rule, integer columns, easier in JS.
+    const allBatteries = await prisma.batteryType.findMany({
+      where: { companyId, active: true },
+      orderBy: { name: 'asc' },
+      take: 500,
+    });
+    const batteries = allBatteries
+      .filter((b) => b.currentStock < b.lowStockThreshold)
+      .map((b) => ({
+        id: b.id,
+        name: b.name,
+        currentStock: b.currentStock,
+        lowStockThreshold: b.lowStockThreshold,
+        gap: b.lowStockThreshold - b.currentStock,
+      }))
+      .sort((a, b) => b.gap - a.gap);
+
+    res.json({
+      materials,
+      batteries,
+      counts: {
+        materials: materials.length,
+        batteries: batteries.length,
+        total: materials.length + batteries.length,
+      },
+    });
+  }),
+);
+
 // Sub-routers
 router.use('/materials', materialsRouter);
 router.use('/battery-types', batteryTypesRouter);

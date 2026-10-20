@@ -14,6 +14,10 @@ const rejectSchema = z.object({
   reason: z.string().trim().min(1, 'Rejection reason is required').max(500),
 });
 
+const reverseSchema = z.object({
+  reason: z.string().trim().min(1, 'Reversal reason is required').max(500),
+});
+
 function parseId(raw: string): number {
   const n = Number(raw);
   if (!Number.isInteger(n) || n <= 0) throw new HttpError(400, 'Invalid id');
@@ -29,8 +33,9 @@ router.get(
     const statusFilter =
       req.query.status === 'PENDING' ||
       req.query.status === 'APPROVED' ||
-      req.query.status === 'REJECTED'
-        ? { status: req.query.status as 'PENDING' | 'APPROVED' | 'REJECTED' }
+      req.query.status === 'REJECTED' ||
+      req.query.status === 'REVERSED'
+        ? { status: req.query.status as 'PENDING' | 'APPROVED' | 'REJECTED' | 'REVERSED' }
         : {};
 
     const requests = await prisma.productionRequest.findMany({
@@ -82,7 +87,6 @@ router.get(
 );
 
 // ── POST /admin/production-requests/:id/approve ──────
-// Atomic approval: either ALL stock changes + status flip happen, or NOTHING does.
 router.post(
   '/:id/approve',
   asyncHandler(async (req, res) => {
@@ -91,7 +95,6 @@ router.post(
 
     const approved = await prisma.$transaction(
       async (tx) => {
-        // 1. Lock request row + verify status + verify company scope (all in one)
         const lockRows = await tx.$queryRaw<{ id: number; status: string }[]>`
           SELECT id, status FROM production_requests
           WHERE id = ${id} AND "companyId" = ${companyId}
@@ -102,11 +105,9 @@ router.post(
           throw new HttpError(400, 'Request is not pending', 'NOT_PENDING');
         }
 
-        // 2. Load request (snapshot + quantity + batteryTypeId)
         const request = await tx.productionRequest.findUnique({ where: { id } });
         if (!request) throw new HttpError(404, 'Request not found');
 
-        // 3. Extract requirements from snapshot; SORT by rawMaterialId for deadlock safety
         const snapshot = request.recipeSnapshot as unknown as RecipeSnapshot;
         const requirements = [...snapshot.materials]
           .map((m) => ({
@@ -117,7 +118,6 @@ router.post(
           }))
           .sort((a, b) => a.rawMaterialId - b.rawMaterialId);
 
-        // 4. Lock each material in id-order and collect ALL insufficiencies
         const insufficiencies: Array<{
           rawMaterialId: number;
           name: string;
@@ -154,7 +154,6 @@ router.post(
           }
         }
 
-        // 5. If ANY material is insufficient → abort (no partial writes)
         if (insufficiencies.length > 0) {
           throw new HttpError(
             400,
@@ -164,7 +163,6 @@ router.post(
           );
         }
 
-        // 6. Apply all material consumptions (rows already locked above)
         const createdMovements: StockMovement[] = [];
         for (const reqItem of requirements) {
           const mvt = await recordStockMovement(
@@ -183,7 +181,6 @@ router.post(
           createdMovements.push(mvt);
         }
 
-        // 7. Add finished batteries
         await recordStockMovement(
           tx,
           { companyId, userId },
@@ -198,7 +195,6 @@ router.post(
           },
         );
 
-        // 8. Update request
         const updated = await tx.productionRequest.update({
           where: { id },
           data: {
@@ -208,7 +204,6 @@ router.post(
           },
         });
 
-        // 9. Append-only event
         await tx.productionRequestEvent.create({
           data: {
             productionRequestId: id,
@@ -219,7 +214,7 @@ router.post(
 
         return updated;
       },
-      { timeout: 15000 }, // buffer above Prisma's default 5s for many-material recipes
+      { timeout: 15000 },
     );
 
     res.json({ request: toDto(approved) });
@@ -268,6 +263,131 @@ router.post(
     });
 
     res.json({ request: toDto(rejected) });
+  }),
+);
+
+// ── POST /admin/production-requests/:id/reverse ──────
+// Atomic reversal: return materials, remove batteries, flip status.
+// Pre-checks that battery stock has not been dispatched away.
+router.post(
+  '/:id/reverse',
+  asyncHandler(async (req, res) => {
+    const id = parseId(req.params.id);
+    const body = reverseSchema.parse(req.body);
+    const { companyId, userId } = req.user!;
+
+    const reversed = await prisma.$transaction(
+      async (tx) => {
+        // 1. Lock request + verify status
+        const lockRows = await tx.$queryRaw<{ id: number; status: string }[]>`
+          SELECT id, status FROM production_requests
+          WHERE id = ${id} AND "companyId" = ${companyId}
+          FOR UPDATE
+        `;
+        if (lockRows.length === 0) throw new HttpError(404, 'Request not found');
+        if (lockRows[0].status !== 'APPROVED') {
+          throw new HttpError(
+            400,
+            'Only approved requests can be reversed',
+            'NOT_APPROVED',
+          );
+        }
+
+        const request = await tx.productionRequest.findUnique({ where: { id } });
+        if (!request) throw new HttpError(404, 'Request not found');
+
+        const snapshot = request.recipeSnapshot as unknown as RecipeSnapshot;
+        const requirements = [...snapshot.materials]
+          .map((m) => ({
+            rawMaterialId: m.rawMaterialId,
+            totalRequired: new Prisma.Decimal(m.totalRequired),
+          }))
+          .sort((a, b) => a.rawMaterialId - b.rawMaterialId);
+
+        // 2. Pre-check battery stock (fails fast with specific error if dispatched)
+        const btRows = await tx.$queryRaw<
+          { id: number; current_stock: number; name: string }[]
+        >`
+          SELECT id, "currentStock" AS current_stock, name
+          FROM battery_types
+          WHERE id = ${request.batteryTypeId} AND "companyId" = ${companyId}
+          FOR UPDATE
+        `;
+        if (btRows.length === 0) throw new HttpError(404, 'Battery type not found');
+        const btCurrent = new Prisma.Decimal(btRows[0].current_stock);
+        if (btCurrent.lessThan(request.quantity)) {
+          throw new HttpError(
+            400,
+            `Cannot reverse: ${btRows[0].name} stock is ${btCurrent.toString()} but ${request.quantity} must be removed`,
+            'INSUFFICIENT_BATTERY_FOR_REVERSAL',
+            {
+              batteryTypeId: request.batteryTypeId,
+              batteryTypeName: btRows[0].name,
+              required: String(request.quantity),
+              available: btCurrent.toString(),
+            },
+          );
+        }
+
+        // 3. Return raw materials (positive delta — always safe)
+        for (const reqItem of requirements) {
+          await recordStockMovement(
+            tx,
+            { companyId, userId },
+            {
+              itemType: 'RAW_MATERIAL',
+              movementType: 'REVERSAL',
+              rawMaterialId: reqItem.rawMaterialId,
+              quantityChange: reqItem.totalRequired,
+              referenceType: 'PRODUCTION_REQUEST_REVERSAL',
+              referenceId: id,
+              reason: `Reversal of request #${id}: ${body.reason}`,
+            },
+          );
+        }
+
+        // 4. Remove finished batteries (negative delta — pre-checked above)
+        await recordStockMovement(
+          tx,
+          { companyId, userId },
+          {
+            itemType: 'FINISHED_BATTERY',
+            movementType: 'REVERSAL',
+            batteryTypeId: request.batteryTypeId,
+            quantityChange: new Prisma.Decimal(-request.quantity),
+            referenceType: 'PRODUCTION_REQUEST_REVERSAL',
+            referenceId: id,
+            reason: `Reversal of request #${id}: ${body.reason}`,
+          },
+        );
+
+        // 5. Flip status (original row preserved)
+        const updated = await tx.productionRequest.update({
+          where: { id },
+          data: {
+            status: 'REVERSED',
+            reversedAt: new Date(),
+            reversedById: userId,
+            reversalReason: body.reason,
+          },
+        });
+
+        // 6. Append-only event
+        await tx.productionRequestEvent.create({
+          data: {
+            productionRequestId: id,
+            eventType: 'REVERSED',
+            actorId: userId,
+            reason: body.reason,
+          },
+        });
+
+        return updated;
+      },
+      { timeout: 15000 },
+    );
+
+    res.json({ request: toDto(reversed) });
   }),
 );
 

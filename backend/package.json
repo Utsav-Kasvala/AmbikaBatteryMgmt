@@ -13,13 +13,14 @@
     "prisma:studio": "prisma studio",
     "test:isolation": "node scripts/test-isolation.mjs",
     "test:materials": "node scripts/test-materials.mjs",
-    "test:all": "npm run test:isolation && npm run test:materials && npm run test:batteryTypes && npm run test:recipes && npm run test:stock && npm run test:productionRequests && npm run test:approval && npm run test:receiptsDispatches",
+    "test:all": "npm run test:isolation && npm run test:materials && npm run test:batteryTypes && npm run test:recipes && npm run test:stock && npm run test:productionRequests && npm run test:approval && npm run test:receiptsDispatches && npm run test:reversalLowStock",
     "test:batteryTypes": "node scripts/test-batteryTypes.mjs",
     "test:recipes": "node scripts/test-recipes.mjs",
     "test:stock": "node scripts/test-stock.mjs",
     "test:productionRequests": "node scripts/test-production-requests.mjs",
     "test:approval": "node scripts/test-approval.mjs",
-    "test:receiptsDispatches": "node scripts/test-receipts-dispatches.mjs"
+    "test:receiptsDispatches": "node scripts/test-receipts-dispatches.mjs",
+    "test:reversalLowStock": "node scripts/test-reversal-lowstock.mjs"
   },
   "dependencies": {
     "@prisma/client": "^5.22.0",
