@@ -32,6 +32,9 @@ export default function AppLayout() {
           ),
         }}
       />
+      {/* Hidden from tab bar — reachable via router.push from Settings/Dashboard */}
+      <Tabs.Screen name="materials" options={{ href: null, title: 'Materials' }} />
+      <Tabs.Screen name="battery-types" options={{ href: null, title: 'Battery Types' }} />
     </Tabs>
   );
 }

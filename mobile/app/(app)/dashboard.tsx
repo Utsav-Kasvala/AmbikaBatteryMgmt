@@ -101,6 +101,26 @@ function AdminDashboard() {
         {state.status === 'signedIn' ? state.company.name : ''}
       </Text>
 
+      {/* Admin quick links */}
+      <View style={{ flexDirection: 'row', gap: 8 }}>
+        <Button
+          mode="outlined"
+          icon="package-variant"
+          onPress={() => router.push('/(app)/materials')}
+          style={{ flex: 1 }}
+        >
+          Materials
+        </Button>
+        <Button
+          mode="outlined"
+          icon="battery"
+          onPress={() => router.push('/(app)/battery-types')}
+          style={{ flex: 1 }}
+        >
+          Batteries
+        </Button>
+      </View>
+
       {/* Pending requests card */}
       <Card style={styles.card} onPress={() => router.push('/(app)/requests')}>
         <Card.Content style={styles.kpiRow}>

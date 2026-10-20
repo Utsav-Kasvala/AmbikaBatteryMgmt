@@ -2,9 +2,11 @@ import React from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { Button, Card, Divider, Text } from 'react-native-paper';
 import { useAuth } from '../../src/auth/AuthContext';
+import { useRouter } from 'expo-router';
 
 export default function SettingsScreen() {
   const { state, signOut } = useAuth();
+  const router = useRouter();
   if (state.status !== 'signedIn') return null;
 
   const { user, company } = state;
@@ -50,6 +52,31 @@ export default function SettingsScreen() {
           ) : null}
         </Card.Content>
       </Card>
+
+      {/* Admin tools */}
+      {isAdmin && (
+        <Card style={styles.card}>
+          <Card.Title title="Admin Tools" />
+          <Card.Content style={{ gap: 4 }}>
+            <Button
+              mode="text"
+              icon="package-variant"
+              onPress={() => router.push('/(app)/materials')}
+              style={{ alignSelf: 'stretch', justifyContent: 'flex-start' }}
+            >
+              Manage Raw Materials
+            </Button>
+            <Button
+              mode="text"
+              icon="battery"
+              onPress={() => router.push('/(app)/battery-types')}
+              style={{ alignSelf: 'stretch', justifyContent: 'flex-start' }}
+            >
+              Manage Battery Types
+            </Button>
+          </Card.Content>
+        </Card>
+      )}
 
       <Button
         mode="outlined"

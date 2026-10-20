@@ -67,10 +67,13 @@ export async function buildSnapshot(
 }
 
 // ── DTO ───────────────────────────────────────────────
-export function toDto(r: ProductionRequest) {
+export function toDto(
+  r: ProductionRequest & { batteryType?: { name: string } | null },
+) {
   return {
     id: r.id,
     batteryTypeId: r.batteryTypeId,
+    batteryTypeName: r.batteryType?.name ?? null,
     recipeVersionId: r.recipeVersionId,
     quantity: r.quantity,
     status: r.status,
@@ -160,6 +163,7 @@ router.get(
         status: { not: 'DELETED' },
         ...statusFilter,
       },
+      include: { batteryType: { select: { name: true } } },
       orderBy: { submittedAt: 'desc' },
       take: 200,
     });
@@ -182,6 +186,7 @@ router.get(
         requestedById: userId,
         status: { not: 'DELETED' },
       },
+      include: { batteryType: { select: { name: true } } },
     });
     if (!request) throw new HttpError(404, 'Request not found');
     res.json({ request: toDto(request) });

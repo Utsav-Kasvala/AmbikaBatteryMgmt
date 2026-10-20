@@ -44,6 +44,7 @@ router.get(
         status: { not: 'DELETED' },
         ...statusFilter,
       },
+      include: { batteryType: { select: { name: true } } },
       orderBy: { submittedAt: 'desc' },
       take: 200,
     });

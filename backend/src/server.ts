@@ -4,6 +4,7 @@ import { checkDb, closeDb } from './db';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
 import productionRoutes from './routes/production.routes';
+import batteryTypesPublicRoutes from './routes/battery-types.public.routes';
 import { errorHandler, notFoundHandler } from './lib/errors';
 
 const app = express();
@@ -43,6 +44,7 @@ app.get('/health', async (_req, res) => {
 app.use('/auth', authRoutes);
 app.use('/admin', adminRoutes);
 app.use('/production-requests', productionRoutes);
+app.use('/battery-types', batteryTypesPublicRoutes);
 
 app.use(notFoundHandler);
 app.use(errorHandler);
